@@ -1,0 +1,5941 @@
+---
+title: 'ROFLCOPTER FANTASY LEAGUE'
+always_allow_html: yes
+output: 
+  html_document:
+    css: ../css/tlst.css
+    toc: yes
+    toc_float: yes
+---
+
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 12px;
+  }
+td {  /* Table  */
+  font-size: 8px;
+}
+h1.title {
+  font-size: 50px;
+  color: Black;
+}
+h1 { /* Header 1 */
+  font-size: 40px;
+  color: Black;
+}
+h2 { /* Header 2 */
+    font-size: 40px;
+  color: Black;
+}
+h3 { /* Header 3 */
+  font-size: 25px;
+  font-family: "Times New Roman", Times, serif;
+  color: Black;
+}
+code.r{ /* Code block */
+    font-size: 12px;
+}
+pre { /* Code block - determines code spacing between lines */
+    font-size: 14px;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(jsonlite)       # Pulling down JSON data
+library(tidyverse)      # Tools for data analysis
+library(glue)           # Sticking strings together
+library(RColorBrewer)   # Color Pals
+library(plotly)         # Interactive graphics
+library(DT)             # JS datatables package
+library(ggthemes)       # For 538 theme
+library(scales)         # Labels for ggplot scales
+library(ggbeeswarm)
+library(ggrepel)
+library(treemapify)
+library(gganimate)
+
+
+cbPalette <- c("slategrey", "firebrick", "forestgreen", "orange2", "steelblue")
+bcPalette <- c("firebrick4", "steelblue4")
+```
+
+# WEEKLY ARCHIVE {.tabset}
+
+\
+\
+
+## 2021 {.tabset .tabset-fade .tabset-pills}
+
+### S21W11
+
+```{r get_data27, cache=TRUE}
+source("global2021.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2021)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2021, week = 11)
+mu_view00 <- mu_out$mu_view0
+mu_view0 <- na.omit(mu_view00)
+
+stat_out <- F_get_weekly_player_stats(season = 2021, week = 11)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 11 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 11 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 11 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+quasigif11 <- ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 11 Point Output for {closest_state}") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position, display_name) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight() +
+  transition_states(display_name,
+                    transition_length = 10,
+                    state_length = 90)
+
+anim_save("quasi11.gif", quasigif11)
+
+
+```
+
+<center>
+![](quasi11.gif)
+</center>
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 11 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 11 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S21W10
+
+```{r get_data26, cache=TRUE}
+source("global2021.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2021)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2021, week = 10)
+mu_view00 <- mu_out$mu_view0
+mu_view0 <- na.omit(mu_view00)
+
+stat_out <- F_get_weekly_player_stats(season = 2021, week = 10)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 10 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 10 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 10 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+quasigif10 <- ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 10 Point Output for {closest_state}") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position, display_name) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight() +
+  transition_states(display_name,
+                    transition_length = 10,
+                    state_length = 90)
+
+anim_save("quasi10.gif", quasigif10)
+
+
+```
+
+<center>
+![](quasi10.gif)
+</center>
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 10 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 10 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S21W09
+
+```{r get_data25, cache=TRUE}
+source("global2021.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2021)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2021, week = 9)
+mu_view00 <- mu_out$mu_view0
+mu_view0 <- na.omit(mu_view00)
+
+stat_out <- F_get_weekly_player_stats(season = 2021, week = 9)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 9 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 9 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 9 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+quasigif9 <- ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 9 Point Output for {closest_state}") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position, display_name) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight() +
+  transition_states(display_name,
+                    transition_length = 10,
+                    state_length = 90)
+
+anim_save("quasi9.gif", quasigif9)
+
+
+```
+
+<center>
+![](quasi9.gif)
+</center>
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 9 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 9 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S21W08
+
+```{r get_data24, cache=TRUE}
+source("global2021.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2021)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2021, week = 8)
+mu_view00 <- mu_out$mu_view0
+mu_view0 <- na.omit(mu_view00)
+
+stat_out <- F_get_weekly_player_stats(season = 2021, week = 8)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 8 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 8 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 8 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+quasigif8 <- ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 8 Point Output for {closest_state}") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position, display_name) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight() +
+  transition_states(display_name,
+                    transition_length = 10,
+                    state_length = 90)
+
+anim_save("quasi8.gif", quasigif8)
+
+
+```
+
+<center>
+![](quasi8.gif)
+</center>
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 8 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 8 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S21W07
+
+```{r get_data23, cache=TRUE}
+source("global2021.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2021)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2021, week = 7)
+mu_view00 <- mu_out$mu_view0
+mu_view0 <- na.omit(mu_view00)
+
+stat_out <- F_get_weekly_player_stats(season = 2021, week = 7)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 7 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 7 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 7 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+quasigif7 <- ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 7 Point Output for {closest_state}") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position, display_name) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight() +
+  transition_states(display_name,
+                    transition_length = 10,
+                    state_length = 90)
+
+anim_save("quasi7.gif", quasigif7)
+
+
+```
+
+<center>
+![](quasi7.gif)
+</center>
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 7 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 7 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S21W06
+
+```{r get_data22, cache=TRUE}
+source("global2021.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2021)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2021, week = 6)
+mu_view00 <- mu_out$mu_view0
+mu_view0 <- na.omit(mu_view00)
+
+stat_out <- F_get_weekly_player_stats(season = 2021, week = 6)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 6 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 6 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 6 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+quasigif6 <- ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 6 Point Output for {closest_state}") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position, display_name) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight() +
+  transition_states(display_name,
+                    transition_length = 10,
+                    state_length = 90)
+
+anim_save("quasi6.gif", quasigif6)
+
+
+```
+
+<center>
+![](quasi6.gif)
+</center>
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 6 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 6 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S21W05
+
+```{r get_data21, cache=TRUE}
+source("global2021.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2021)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2021, week = 5)
+mu_view00 <- mu_out$mu_view0
+mu_view0 <- na.omit(mu_view00)
+
+stat_out <- F_get_weekly_player_stats(season = 2021, week = 5)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 5 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 5 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 5 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+quasigif5 <- ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 5 Point Output for {closest_state}") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position, display_name) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight() +
+  transition_states(display_name,
+                    transition_length = 10,
+                    state_length = 90)
+
+anim_save("quasi5.gif", quasigif5)
+
+
+```
+
+<center>
+![](quasi5.gif)
+</center>
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 5 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 5 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S21W04
+
+```{r get_data20, cache=TRUE}
+source("global2021.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2021)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2021, week = 4)
+mu_view00 <- mu_out$mu_view0
+mu_view0 <- na.omit(mu_view00)
+
+stat_out <- F_get_weekly_player_stats(season = 2021, week = 4)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 4 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 4 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 4 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+quasigif4 <- ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 4 Point Output for {closest_state}") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position, display_name) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight() +
+  transition_states(display_name,
+                    transition_length = 10,
+                    state_length = 90)
+
+anim_save("quasi4.gif", quasigif4)
+
+
+```
+
+<center>
+![](quasi4.gif)
+</center>
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 4 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 4 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S21W03
+
+```{r get_data19, cache=TRUE}
+source("global2021.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2021)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2021, week = 3)
+mu_view00 <- mu_out$mu_view0
+mu_view0 <- na.omit(mu_view00)
+
+stat_out <- F_get_weekly_player_stats(season = 2021, week = 3)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 3 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 3 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 3 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+quasigif3 <- ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 3 Point Output for {closest_state}") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position, display_name) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight() +
+  transition_states(display_name,
+                    transition_length = 10,
+                    state_length = 90)
+
+anim_save("quasi3.gif", quasigif3)
+
+
+```
+
+<center>
+![](quasi3.gif)
+</center>
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 3 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 3 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S21W02
+
+```{r get_data18, cache=TRUE}
+source("global2021.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2021)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2021, week = 2)
+mu_view00 <- mu_out$mu_view0
+mu_view0 <- na.omit(mu_view00)
+
+stat_out <- F_get_weekly_player_stats(season = 2021, week = 2)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 2 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 2 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 2 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+quasigif2 <- ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 2 Point Output for {closest_state}") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position, display_name) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight() +
+  transition_states(display_name,
+                    transition_length = 10,
+                    state_length = 90)
+
+anim_save("quasi2.gif", quasigif2)
+
+
+```
+
+<center>
+![](quasi2.gif)
+</center>
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 2 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 2 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S21W01
+
+```{r get_data17, cache=TRUE}
+source("global2021.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2021)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2021, week = 1)
+mu_view00 <- mu_out$mu_view0
+mu_view0 <- na.omit(mu_view00)
+
+stat_out <- F_get_weekly_player_stats(season = 2021, week = 1)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 1 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 1 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 1 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7, results = FALSE}
+
+quasigif <- ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 1 Point Output for {closest_state}") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position, display_name) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black"
+    ) +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight() +
+  transition_states(display_name,
+                    transition_length = 10,
+                    state_length = 90)
+
+anim_save("quasi.gif", quasigif)
+
+
+```
+
+<center>
+![](quasi.gif)
+</center>
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 1 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 1 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+## 2020 {.tabset .tabset-fade .tabset-pills}
+
+### S20W16
+
+```{r get_data16, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 16)
+mu_view00 <- mu_out$mu_view0
+mu_view0 <- na.omit(mu_view00)
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 16)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 16 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 16 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 16 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 16 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 16 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S20W15
+
+```{r get_data15, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 15)
+mu_view00 <- mu_out$mu_view0
+mu_view0 <- na.omit(mu_view00)
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 15)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 15 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 15 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 15 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 15 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 15 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S20W14
+
+```{r get_data14, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 14)
+mu_view00 <- mu_out$mu_view0
+mu_view0 <- na.omit(mu_view00)
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 14)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 14 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 14 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 14 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 14 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 14 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S20W13
+
+```{r get_data13, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 13)
+mu_view0 <- mu_out$mu_view0
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 13)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 13 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 13 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 13 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 13 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 13 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S20W12
+
+```{r get_data12, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 12)
+mu_view0 <- mu_out$mu_view0
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 12)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 12 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 12 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 12 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 12 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 12 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S20W11
+
+```{r get_data11, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 11)
+mu_view0 <- mu_out$mu_view0
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 11)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 11 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 11 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 11 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 11 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 11 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S20W10
+
+```{r get_data10, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 10)
+mu_view0 <- mu_out$mu_view0
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 10)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 10 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 10 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 10 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 10 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 10 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S20W09
+
+```{r get_data9, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 9)
+mu_view0 <- mu_out$mu_view0
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 9)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 9 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 9 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 9 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 9 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 9 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S20W08
+
+```{r get_data8, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 8)
+mu_view0 <- mu_out$mu_view0
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 8)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 8 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 8 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 8 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 8 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 8 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S20W07
+
+```{r get_data7, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 7)
+mu_view0 <- mu_out$mu_view0
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 7)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 7 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 7 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 7 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 7 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 7 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S20W06
+
+```{r get_data6, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 6)
+mu_view0 <- mu_out$mu_view0
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 6)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 6 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 6 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 6 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 6 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 6 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S20W05
+
+```{r get_data5, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 5)
+mu_view0 <- mu_out$mu_view0
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 5)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 5 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 5 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 5 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 5 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 5 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S20W04
+
+```{r get_data4, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 4)
+mu_view0 <- mu_out$mu_view0
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 4)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 4 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 4 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 4 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 4 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 4 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S20W03
+
+```{r get_data3, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 3)
+mu_view0 <- mu_out$mu_view0
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 3)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 3 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 3 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 3 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 3 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 3 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S20W02
+
+```{r get_data2, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 2)
+mu_view0 <- mu_out$mu_view0
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 2)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 2 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 2 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 2 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 2 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 2 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+\
+\
+
+### S20W01
+
+```{r get_data1, cache=TRUE}
+source("global.R")
+ 
+# Get league info for 2019 season
+s19_info <- F_get_lg_info(user_id = user_id, season = 2020)
+
+# unload some information from this
+lg_id <- s19_info$lg_id
+lg_owners <- s19_info$user_vw0
+lg_rules <- s19_info$lg_rules
+
+#### Combining Data ####========================================================
+
+# pull matchup and stat information
+mu_out <- F_get_weekly_matchup(season = 2020, week = 1)
+mu_view0 <- mu_out$mu_view0
+
+stat_out <- F_get_weekly_player_stats(season = 2020, week = 1)
+stat_sum0 <- stat_out$player_stats_sum0
+stat_melt0 <- stat_out$stats_melt1
+
+# combine the matchup and stat data
+mu_view1 <- mu_view0 %>% 
+  left_join(stat_sum0, 
+            by = c("player_id" = "player_id", 
+                   "week" = "week"))
+
+# add in the owner name
+mu_view2 <- mu_view1 %>% 
+  left_join(lg_owners, 
+            by = c("roster_id" = "roster_id"))
+
+# add in player information
+mu_view3 <- mu_view2 %>% 
+  left_join(player_view0, 
+            by = c("player_id" = "player_id"))
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width=7, fig.height=7}
+
+weekly_owner_scores0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id) %>% 
+  summarise(tot_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup()
+
+# join this back onto 
+weekly_owner_scores1 <- weekly_owner_scores0 %>% 
+  left_join(weekly_owner_scores0, by = c("week", "matchup_id", "starter")) %>% 
+  filter(display_name.x != display_name.y) %>% 
+  mutate(Week = as.factor(week),
+         display_name.x = as.factor(display_name.x)) %>% 
+  select(Week, display_name.x, tot_points.x, tot_points.y, starter, matchup_id) %>% 
+  rename(`Owner` = display_name.x, 
+         `Points For` = tot_points.x, 
+         `Points Against` = tot_points.y) %>% 
+  arrange(Week) %>% 
+  mutate(Outcome = case_when(`Points For` > `Points Against` ~ "Win", 
+                             TRUE ~ "Loss"))
+
+ggplot(data = weekly_owner_scores1 %>% filter(starter == TRUE),
+       aes(x = matchup_id, y = `Points For`, fill = Outcome, label = Owner)) + 
+  geom_bar( position = "dodge", stat = "identity") + 
+  geom_text(position = position_dodge(width = 1),
+             angle = 0, size = 3) + 
+  geom_hline(yintercept = median(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`))) + 
+  geom_hline(yintercept = mean(weekly_owner_scores1 %>% 
+                                   filter(starter == TRUE) %>% 
+                                   pull(`Points For`)),
+             linetype = "dashed") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=bcPalette, name="Outcome:") +
+  coord_flip() + 
+  ggtitle("Week 1 Results",
+          subtitle = "Teams are grouped by matchup. Solid line is week median, dotted line is week average.") + 
+  
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank(), 
+        axis.text.y = element_blank())
+```
+
+\
+\
+```{r, fig.align='center', fig.height=7, fig.width=7}
+# let's order the players by their total scores
+weekly_owner_scores_sum0 <- weekly_owner_scores1 %>% 
+  filter(starter == TRUE) %>% 
+  mutate(Owner_Rank = rank(`Points For`)) %>% 
+  select(Owner, Owner_Rank)
+
+weekly_owner_position0 <- mu_view3 %>% 
+  group_by(week, display_name, starter, matchup_id, position) %>% 
+  summarise(position_points = sum(player_score, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(Week = as.factor(week), 
+         display_name = as.factor(display_name)) %>% 
+  rename(Owner = display_name,
+         `Points For` = position_points) %>% 
+  ungroup() %>% 
+  left_join(weekly_owner_scores_sum0)
+  
+ggplot(data = weekly_owner_position0 %>% filter(starter == TRUE),
+       aes(x = fct_reorder(Owner, Owner_Rank),  y = `Points For`, fill = position, label = round(`Points For`, 1))) + 
+  geom_bar( stat = "identity", colour = "black") + 
+  geom_text(position = position_stack(vjust = 0.5), size = 3) + 
+  #scale_fill_brewer(palette = "Set1", name = "Position") +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  ggtitle("Week 1 Owner Position Scores")  +
+    
+  coord_flip() + 
+  theme_fivethirtyeight() + 
+  theme(axis.title = element_text(),
+        axis.title.y = element_blank())
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+mu_view3_pos = mu_view3 %>% filter(position!="NA")
+mu_view3_pos_starter = mu_view3_pos %>% filter(starter==TRUE)
+
+ggplot(data = mu_view3_pos, aes(x = position, y = player_score, colour=position, size=5, alpha=starter)) +
+  geom_quasirandom() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_colour_manual(values=cbPalette) +
+  
+  ggtitle("Week 1 Point Distribution by Player Position") + 
+  
+  geom_text(
+    data = mu_view3_pos_starter %>% group_by(position) %>% top_n(1, player_score),
+    aes(label=last_name), fontface="bold", colour="black") +
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  scale_alpha_discrete(name="Starter:") +
+  #coord_flip() +
+  guides(size=FALSE, colour=FALSE, alpha = guide_legend(override.aes = list(size=5))) +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(x = position, y = player_score, fill=position)) +
+  geom_boxplot() + 
+  scale_y_continuous("Points") + 
+  scale_x_discrete("Position") + 
+  #scale_fill_brewer(palette = "Set1") + 
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  
+  ggtitle("Week 1 Starter Point Distribution by Player Position") + 
+  
+  theme(axis.title = element_text(),
+        legend.title = element_blank()) +
+  #coord_flip() +
+  theme_fivethirtyeight()
+
+
+```
+
+\
+\
+```{r, fig.align='center', fig.width= 7, fig.height=7}
+
+ggplot(data = mu_view3_pos_starter, aes(area = player_score, fill = position, label = last_name,
+                subgroup = display_name)) +
+  scale_fill_manual(values=cbPalette, name = "Position:") +
+  # 1. Draw type_2 borders and fill colors
+  geom_treemap() +
+  # 2. Draw type_1 borders
+  geom_treemap_subgroup_border(colour="black") +
+  # 3. Print type_1 text
+  geom_treemap_subgroup_text(place = "bottomright", grow = T, alpha = 0.25, colour = "black",
+                             fontface = "italic", min.size = 0) +
+  # 4. Print type_2 text
+  geom_treemap_text(colour = "black", place = "topleft", reflow = T) +
+  theme(legend.position = 0) +
+  ggtitle("Week 1 Treemap") +
+  theme_fivethirtyeight()
+
+
+```
